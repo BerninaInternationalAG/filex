@@ -36,7 +36,7 @@
    The default may be changed by modifying this file or calling the
    fx_media_format_oem_name_set utility prior to calling fx_media_format.  */
 
-UCHAR   _fx_media_format_oem_name[8] = "EL FILEX";
+UCHAR   _fx_media_format_oem_name[8] =  { 'E','L',' ','F','I','L','E','X' };
 
 
 /* Define the default media type.  This default may be changed by modifying
