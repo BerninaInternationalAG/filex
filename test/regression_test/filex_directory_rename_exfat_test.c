@@ -19,6 +19,7 @@
 static TX_THREAD                ftest_0;
 #endif
 static FX_MEDIA                 ram_disk;
+static FX_FILE                  probe_file;
 
 
 /* Define the counters used in the test application...  */
@@ -35,6 +36,7 @@ static UCHAR                    cache_buffer[CACHE_SIZE];
 
 void    filex_directory_rename_exfat_application_define(void *first_unused_memory);
 static void    ftest_0_entry(ULONG thread_input);
+static UINT    path_probe(CHAR *file_path);
 
 VOID  _fx_ram_driver(FX_MEDIA *media_ptr);
 void  test_control_return(UINT status);
@@ -80,12 +82,32 @@ void    filex_directory_rename_exfat_application_define(void *first_unused_memor
 
 
 
+/* Open and close the file at file_path to report whether that path
+   resolves on this media.  */
+static UINT    path_probe(CHAR *file_path)
+{
+
+UINT status;
+
+    status =  fx_file_open(&ram_disk, &probe_file, file_path, FX_OPEN_FOR_READ);
+    if (status == FX_SUCCESS)
+    {
+        fx_file_close(&probe_file);
+    }
+
+    return(status);
+}
+
+
 /* Define the test threads.  */
 
 static void    ftest_0_entry(ULONG thread_input)
 {
 
 UINT        status;
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+ULONG       entry_writes_before;
+#endif
 
     FX_PARAMETER_NOT_USED(thread_input);
 
@@ -154,6 +176,80 @@ UINT        status;
         printf("ERROR!\n");
         test_control_return(5);
     }
+
+    /* An exFAT directory has no "." / ".." entries: the parent directory
+       is not recorded inside the directory at all - the entries at index
+       0 and 1 are records of the entry sets the directory contains - and
+       a ".." path component consequently does not resolve on exFAT
+       media. Moving a directory to a different parent therefore changes
+       the two parent entries only; nothing inside the moved directory
+       needs an update, which is why maintaining the ".." entry is a
+       FAT-only operation. Walk every parent transition - between
+       sub-directories, into and out of the root, plus a rename within
+       one parent - and verify that the move works, that the moved
+       content follows it, and that no FAT directory entry is written at
+       all (_fx_directory_entry_write is the FAT-only writer and the only
+       one counted in fx_media_directory_entry_writes).  */
+
+    /* Move an empty directory to a different parent directory.  */
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    entry_writes_before =  ram_disk.fx_media_directory_entry_writes;
+#endif
+    status =  fx_directory_rename(&ram_disk, "/OURTEST/newdir/finaltest", "/OURTEST/finaltest");
+    return_if_fail( status == FX_SUCCESS);
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    return_if_fail( ram_disk.fx_media_directory_entry_writes == entry_writes_before);
+#endif
+
+    /* Put a marker file inside the directory. A path through ".." does
+       not resolve on exFAT media - there is no such entry to follow.  */
+    status =  fx_file_create(&ram_disk, "/OURTEST/finaltest/MARK.TXT");
+    return_if_fail( status == FX_SUCCESS);
+    status =  path_probe("/OURTEST/finaltest/MARK.TXT");
+    return_if_fail( status == FX_SUCCESS);
+    status =  path_probe("/OURTEST/finaltest/../OURTEST/finaltest/MARK.TXT");
+    return_if_fail( status == FX_NOT_FOUND);
+
+    /* Move the directory into the root directory.  */
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    entry_writes_before =  ram_disk.fx_media_directory_entry_writes;
+#endif
+    status =  fx_directory_rename(&ram_disk, "/OURTEST/finaltest", "/finaltest");
+    return_if_fail( status == FX_SUCCESS);
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    return_if_fail( ram_disk.fx_media_directory_entry_writes == entry_writes_before);
+#endif
+    status =  path_probe("/finaltest/MARK.TXT");
+    return_if_fail( status == FX_SUCCESS);
+
+    /* Move it back out of the root directory.  */
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    entry_writes_before =  ram_disk.fx_media_directory_entry_writes;
+#endif
+    status =  fx_directory_rename(&ram_disk, "/finaltest", "/OURTEST/newdir/finaltest");
+    return_if_fail( status == FX_SUCCESS);
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    return_if_fail( ram_disk.fx_media_directory_entry_writes == entry_writes_before);
+#endif
+    status =  path_probe("/OURTEST/newdir/finaltest/MARK.TXT");
+    return_if_fail( status == FX_SUCCESS);
+
+    /* A rename within one parent directory - no parent change at all.  */
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    entry_writes_before =  ram_disk.fx_media_directory_entry_writes;
+#endif
+    status =  fx_directory_rename(&ram_disk, "/OURTEST/newdir/finaltest", "/OURTEST/newdir/final2");
+    return_if_fail( status == FX_SUCCESS);
+#ifndef FX_MEDIA_STATISTICS_DISABLE
+    return_if_fail( ram_disk.fx_media_directory_entry_writes == entry_writes_before);
+#endif
+    status =  path_probe("/OURTEST/newdir/final2/MARK.TXT");
+    return_if_fail( status == FX_SUCCESS);
+
+    /* Still no ".." to follow after the moves.  */
+    status =  path_probe("/OURTEST/newdir/final2/../final2/MARK.TXT");
+    return_if_fail( status == FX_NOT_FOUND);
+
     
     /* Close the media.  */
     status =  fx_media_close(&ram_disk);
