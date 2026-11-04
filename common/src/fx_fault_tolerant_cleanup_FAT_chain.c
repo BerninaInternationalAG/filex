@@ -387,3 +387,4 @@ ULONG                        last_FAT_sector;
     return(FX_SUCCESS);
 }
 #endif /* FX_ENABLE_FAULT_TOLERANT */
+
